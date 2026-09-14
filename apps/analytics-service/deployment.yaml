@@ -17,7 +17,7 @@ spec:
         - name: analytics-service
           # A tag abaixo e reescrita pelo pipeline a cada deploy.
           # Nao edite na mao: o proximo push do CI sobrescreve.
-          image: 419587853242.dkr.ecr.us-east-1.amazonaws.com/analytics-service:v1.0.0-0000000
+          image: 419587853242.dkr.ecr.us-east-1.amazonaws.com/analytics-service:v1.0.0-f0ec729
           ports:
             - containerPort: 8005
           env:

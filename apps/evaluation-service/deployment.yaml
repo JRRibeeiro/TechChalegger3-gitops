@@ -17,7 +17,7 @@ spec:
         - name: evaluation-service
           # A tag abaixo e reescrita pelo pipeline a cada deploy.
           # Nao edite na mao: o proximo push do CI sobrescreve.
-          image: SEU_ECR_REGISTRY/evaluation-service:v1.0.0-0000000
+          image: 419587853242.dkr.ecr.us-east-1.amazonaws.com/evaluation-service:v1.0.0-0000000
           ports:
             - containerPort: 8004
           env:

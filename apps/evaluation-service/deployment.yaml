@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evaluation-service
+  namespace: techchallenger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evaluation-service
+  template:
+    metadata:
+      labels:
+        app: evaluation-service
+    spec:
+      containers:
+        - name: evaluation-service
+          # A tag abaixo e reescrita pelo pipeline a cada deploy.
+          # Nao edite na mao: o proximo push do CI sobrescreve.
+          image: SEU_ECR_REGISTRY/evaluation-service:v1.0.0-0000000
+          ports:
+            - containerPort: 8004
+          env:
+            - name: PORT
+              value: "8004"
+          envFrom:
+            - configMapRef:
+                name: evaluation-service-config
+            - secretRef:
+                name: evaluation-service-secret
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 15
+            periodSeconds: 20

@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: techchallenger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          # A tag abaixo e reescrita pelo pipeline a cada deploy.
+          # Nao edite na mao: o proximo push do CI sobrescreve.
+          image: SEU_ECR_REGISTRY/auth-service:v1.0.0-0000000
+          ports:
+            - containerPort: 8001
+          env:
+            - name: PORT
+              value: "8001"
+          envFrom:
+            - secretRef:
+                name: auth-service-secret
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 15
+            periodSeconds: 20

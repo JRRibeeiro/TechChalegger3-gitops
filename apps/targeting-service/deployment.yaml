@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: targeting-service
+  namespace: techchallenger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: targeting-service
+  template:
+    metadata:
+      labels:
+        app: targeting-service
+    spec:
+      containers:
+        - name: targeting-service
+          # A tag abaixo e reescrita pelo pipeline a cada deploy.
+          # Nao edite na mao: o proximo push do CI sobrescreve.
+          image: SEU_ECR_REGISTRY/targeting-service:v1.0.0-0000000
+          ports:
+            - containerPort: 8003
+          env:
+            - name: PORT
+              value: "8003"
+          envFrom:
+            - configMapRef:
+                name: targeting-service-config
+            - secretRef:
+                name: targeting-service-secret
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 15
+            periodSeconds: 20

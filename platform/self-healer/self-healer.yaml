@@ -68,7 +68,7 @@ spec:
         - name: self-healer
           # A tag abaixo e reescrita pelo pipeline a cada deploy.
           # Nao edite na mao: o proximo push do CI sobrescreve.
-          image: 419587853242.dkr.ecr.us-east-1.amazonaws.com/self-healer:bootstrap
+          image: 353683647248.dkr.ecr.us-east-1.amazonaws.com/self-healer:v1.0.0-662bfc4
           ports:
             - containerPort: 8080
           env:

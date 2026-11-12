@@ -1,0 +1,61 @@
+# Gerador de trafego da demonstracao.
+#
+# Fica batendo no /evaluate pela entrada do cluster (Ingress). Isso exercita a
+# cadeia inteira (evaluation -> flag/targeting -> auth -> Redis/SQS) e e o que
+# faz o dashboard mostrar taxa de requisicoes e, quando o chaos liga o erro no
+# auth, a taxa de erro 5xx subir e o alerta disparar.
+#
+# Nao e infraestrutura de producao: esta aqui so para a demo ter movimento.
+# Para desligar, basta escalar para zero:
+#   kubectl -n techchallenger scale deployment/loadgen --replicas=0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: techchallenger
+  labels:
+    app: loadgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loadgen
+  template:
+    metadata:
+      labels:
+        app: loadgen
+    spec:
+      containers:
+        - name: loadgen
+          image: curlimages/curl:8.11.1
+          env:
+            # entra pelo controller do nginx; as regras do Ingress roteiam por caminho
+            - name: BASE
+              value: http://ingress-nginx-controller.ingress-nginx.svc.cluster.local
+            - name: INTERVALO
+              value: "0.2" # ~5 requisicoes por segundo
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "loadgen batendo em $BASE a cada ${INTERVALO}s"
+              i=0
+              while true; do
+                i=$((i+1))
+                # cadeia completa: exercita evaluation -> flag/targeting -> auth -> Redis/SQS
+                curl -s -o /dev/null -w "eval=%{http_code} " \
+                  "$BASE/evaluate?user_id=user-$((i % 50))&flag_name=demo-flag"
+                # trafego direto no auth, para a taxa de erro 5xx ficar visivel
+                # quando o chaos for ligado (sem chaos isto responde 401, que
+                # nao conta como 5xx; com chaos vira 500 antes da validacao).
+                curl -s -o /dev/null -w "auth=%{http_code} " \
+                  "$BASE/auth/validate" -H "Authorization: Bearer loadgen-probe"
+                sleep "$INTERVALO"
+                [ $((i % 20)) -eq 0 ] && echo " ($i ciclos)"
+              done
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 64Mi

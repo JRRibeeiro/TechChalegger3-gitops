@@ -1,0 +1,70 @@
+# OTel Collector - AGENTE (DaemonSet)
+#
+# Roda um pod em cada no. Le os logs de TODOS os conteineres do no
+# (/var/log/pods), enriquece com os metadados do Kubernetes e manda para o
+# gateway por OTLP. E assim que os logs do cluster chegam centralizados ao
+# Loki, passando pela peca central (o OTel), como a Fase 4 pede.
+
+fullnameOverride: otel-agent
+mode: daemonset
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+
+rewriteDeprecatedComponentNames: false
+
+presets:
+  # filelog: coleta os logs dos conteineres do no
+  logsCollection:
+    enabled: true
+    includeCollectorLogs: false
+  # k8sattributes: carimba cada log com namespace/pod/deployment do cluster
+  kubernetesAttributes:
+    enabled: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+ports:
+  # o agente nao recebe de ninguem de fora; desliga os receptores de entrada
+  otlp:
+    enabled: false
+  otlp-http:
+    enabled: false
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+
+config:
+  receivers:
+    # o chart injeta o filelog pelo preset; removemos os que nao usamos
+    otlp: null
+    jaeger: null
+    zipkin: null
+    prometheus: null
+  exporters:
+    # manda tudo para o gateway, em grpc
+    otlp:
+      endpoint: otel-gateway.monitoring.svc.cluster.local:4317
+      tls:
+        insecure: true
+  service:
+    extensions:
+      - health_check
+    pipelines:
+      # so cuidamos de logs aqui; traces e metricas saem direto dos apps
+      traces: null
+      metrics: null
+      logs:
+        receivers: [filelog]
+        processors: [memory_limiter, batch]
+        exporters: [otlp]

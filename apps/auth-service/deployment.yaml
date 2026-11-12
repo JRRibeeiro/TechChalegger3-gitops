@@ -23,6 +23,16 @@ spec:
           env:
             - name: PORT
               value: "8001"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-gateway.monitoring.svc.cluster.local:4318
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_SERVICE_NAME
+              value: auth-service
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.namespace=togglemaster,deployment.environment=academy
+            - name: CHAOS_ENABLED
+              value: "true"
           envFrom:
             - secretRef:
                 name: auth-service-secret

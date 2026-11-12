@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: self-healer
+  namespace: monitoring
+---
+# Permissao MINIMA: so pode ler e reiniciar (patch) os 5 deployments do
+# ToggleMaster, e so no namespace techchallenger. Nada alem disso.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: self-healer-rollout
+  namespace: techchallenger
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
+    resourceNames:
+      - auth-service
+      - flag-service
+      - targeting-service
+      - evaluation-service
+      - analytics-service
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: self-healer-rollout
+  namespace: techchallenger
+subjects:
+  - kind: ServiceAccount
+    name: self-healer
+    namespace: monitoring
+roleRef:
+  kind: Role
+  name: self-healer-rollout
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: self-healer
+  namespace: monitoring
+spec:
+  selector:
+    app: self-healer
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: self-healer
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: self-healer
+  template:
+    metadata:
+      labels:
+        app: self-healer
+    spec:
+      serviceAccountName: self-healer
+      containers:
+        - name: self-healer
+          # A tag abaixo e reescrita pelo pipeline a cada deploy.
+          # Nao edite na mao: o proximo push do CI sobrescreve.
+          image: 419587853242.dkr.ecr.us-east-1.amazonaws.com/self-healer:bootstrap
+          ports:
+            - containerPort: 8080
+          env:
+            - name: TARGET_NAMESPACE
+              value: techchallenger
+            - name: ALLOWED_DEPLOYMENTS
+              value: auth-service,flag-service,targeting-service,evaluation-service,analytics-service
+            - name: COOLDOWN_SECONDS
+              value: "300"
+            # DRY_RUN=true so registra o que faria, sem reiniciar. Util para
+            # ensaiar a demo. Em producao fica "false".
+            - name: DRY_RUN
+              value: "false"
+            # OpenTelemetry: a propria automacao e observavel
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-gateway.monitoring.svc.cluster.local:4318
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_SERVICE_NAME
+              value: self-healer
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.namespace=togglemaster,deployment.environment=academy
+            - name: OTEL_LOGS_EXPORTER
+              value: none
+          # token, URL do Discord e chave do PagerDuty vem do Secret do Terraform
+          envFrom:
+            - secretRef:
+                name: self-healer
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20

@@ -1,0 +1,94 @@
+# kube-prometheus-stack: Prometheus + Grafana + Alerting do Grafana
+#
+# Prometheus guarda as metricas (do cluster e as que o OTel manda por OTLP).
+# Grafana e a ferramenta de visualizacao e tambem onde moram os alertas,
+# os contact points (PagerDuty, Discord, webhook do self-healer) e o dashboard.
+
+fullnameOverride: kps
+
+crds:
+  enabled: true
+
+# Nao usamos o Alertmanager: o fluxo de incidente e todo pelo alerting do
+# Grafana (contact points), que abre o PagerDuty, avisa o Discord e chama o
+# self-healer. Desligar economiza recurso no cluster do Academy.
+alertmanager:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    # Habilita o receptor OTLP: e por aqui que o gateway do OTel empurra as
+    # metricas dos microsservicos (inclusive as metricas RED do spanmetrics).
+    enableOTLPReceiver: true
+    otlp:
+      # promove atributos de recurso a rotulos, para dar para filtrar por
+      # servico nas queries e no alerta (ex.: service_name="auth-service").
+      promoteResourceAttributes:
+        - service.name
+        - service.namespace
+        - deployment.environment
+        - k8s.namespace.name
+        - k8s.pod.name
+        - k8s.deployment.name
+        - k8s.node.name
+      # troca ponto por underscore nos nomes (http.response.status_code ->
+      # http_response_status_code), que e como o dashboard e o alerta consultam
+      translationStrategy: UnderscoreEscapingWithSuffixes
+    retention: 2d
+    # raspa ServiceMonitors de qualquer namespace com o label release=kps
+    serviceMonitorSelectorNilUsesHelmValues: true
+    resources:
+      requests:
+        cpu: 200m
+        memory: 768Mi
+      limits:
+        memory: 1536Mi
+
+grafana:
+  enabled: true
+  defaultDashboardsTimezone: America/Sao_Paulo
+
+  # senha do admin vem do Secret criado pelo Terraform (nunca do git)
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+
+  # chaves usadas nos contact points (PagerDuty, Discord, token do self-healer).
+  # O Grafana interpola $VAR dos contact points com estas variaveis de ambiente.
+  envFromSecret: grafana-alerting
+
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+    # liga o provisionamento de alertas por ConfigMap (rotulo grafana_alert)
+    alerts:
+      enabled: true
+      label: grafana_alert
+      searchNamespace: monitoring
+
+  # alem do Prometheus (ja vem pronto), adiciona o Loki como fonte de logs
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki.monitoring.svc.cluster.local:3100
+      jsonData:
+        maxLines: 1000
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# o node-exporter precisa tolerar qualquer taint para rodar em todo no
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi

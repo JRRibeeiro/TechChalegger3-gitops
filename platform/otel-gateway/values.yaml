@@ -1,0 +1,151 @@
+# OTel Collector - GATEWAY (Deployment)
+#
+# Esta e a peca central exigida pela Fase 4. Todos os sinais passam por aqui:
+#
+#   microsservicos --(OTLP)--> gateway --> New Relic (traces, metricas)
+#          agente  --(OTLP)--> gateway --> Loki       (logs)
+#                                     \--> Prometheus (metricas via OTLP)
+#                                      \-> New Relic   (logs)
+#
+# O gateway tambem gera as metricas RED (Rate, Errors, Duration) a partir dos
+# traces, pelo connector spanmetrics, e e com elas que o dashboard e o alerta
+# de erro do auth-service trabalham.
+
+fullnameOverride: otel-gateway
+mode: deployment
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+
+# Nomes classicos de componentes (k8sattributes, otlphttp). Evita qualquer
+# divergencia de renomeacao com a versao do binario.
+rewriteDeprecatedComponentNames: false
+
+# O preset liga o processor k8sattributes E cria o RBAC que ele precisa
+# (ler pods e namespaces) para enriquecer a telemetria com dados do cluster.
+presets:
+  kubernetesAttributes:
+    enabled: true
+
+# As chaves do New Relic entram como variaveis de ambiente, a partir do
+# Secret criado pelo Terraform. Nunca ficam no git.
+extraEnvsFrom:
+  - secretRef:
+      name: newrelic-otlp
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+ports:
+  # recebe dos apps (http, 4318) e do agente (grpc, 4317)
+  otlp:
+    enabled: true
+  otlp-http:
+    enabled: true
+  # desliga receptores que nao usamos
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+  # porta das metricas internas do proprio collector (observabilidade do observador)
+  metrics:
+    enabled: true
+
+# ServiceMonitor para o Prometheus raspar as metricas internas do collector.
+# O label release=kps e o que faz o Prometheus do kube-prometheus-stack enxergar.
+serviceMonitor:
+  enabled: true
+  extraLabels:
+    release: kps
+
+config:
+  receivers:
+    # recebe a telemetria dos microsservicos e do agente
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+    # remove o receptor jaeger/zipkin do config padrao do chart
+    jaeger: null
+    zipkin: null
+    prometheus: null
+
+  processors:
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+    batch:
+      send_batch_size: 1024
+      timeout: 5s
+    # marca todos os sinais com o nome do cluster
+    resource:
+      attributes:
+        - key: k8s.cluster.name
+          value: togglemaster-cluster
+          action: upsert
+
+  connectors:
+    # gera as metricas RED a partir dos traces. E a fonte das metricas de
+    # "taxa de requisicoes" e "taxa de erro" do dashboard e do alerta.
+    spanmetrics:
+      histogram:
+        explicit:
+          buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s]
+      dimensions:
+        - name: http.request.method
+        - name: http.response.status_code
+      exemplars:
+        enabled: true
+      metrics_flush_interval: 15s
+
+  exporters:
+    # APM: New Relic recebe traces, metricas e logs por OTLP nativo.
+    otlphttp/newrelic:
+      endpoint: ${env:NEW_RELIC_OTLP_ENDPOINT}
+      headers:
+        api-key: ${env:NEW_RELIC_LICENSE_KEY}
+    # Metricas para o Prometheus (receptor OTLP habilitado no kube-prometheus-stack).
+    otlphttp/prometheus:
+      metrics_endpoint: http://kps-prometheus.monitoring.svc.cluster.local:9090/api/v1/otlp/v1/metrics
+    # Logs para o Loki (endpoint OTLP nativo do Loki 3.x).
+    otlphttp/loki:
+      logs_endpoint: http://loki.monitoring.svc.cluster.local:3100/otlp/v1/logs
+    debug:
+      verbosity: basic
+
+  service:
+    extensions:
+      - health_check
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, resource, batch]
+        exporters: [otlphttp/newrelic, spanmetrics, debug]
+      metrics:
+        receivers: [otlp, spanmetrics]
+        processors: [memory_limiter, resource, batch]
+        exporters: [otlphttp/prometheus, otlphttp/newrelic]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, resource, batch]
+        exporters: [otlphttp/loki, otlphttp/newrelic]
+    telemetry:
+      metrics:
+        readers:
+          - pull:
+              exporter:
+                prometheus:
+                  host: ${env:MY_POD_IP}
+                  port: 8888

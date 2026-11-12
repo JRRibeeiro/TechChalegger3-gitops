@@ -2,10 +2,10 @@
 #
 # Esta e a peca central exigida pela Fase 4. Todos os sinais passam por aqui:
 #
-#   microsservicos --(OTLP)--> gateway --> New Relic (traces, metricas)
+#   microsservicos --(OTLP)--> gateway --> Datadog (traces/APM, metricas)
 #          agente  --(OTLP)--> gateway --> Loki       (logs)
 #                                     \--> Prometheus (metricas via OTLP)
-#                                      \-> New Relic   (logs)
+#                                      \-> Datadog   (logs)
 #
 # O gateway tambem gera as metricas RED (Rate, Errors, Duration) a partir dos
 # traces, pelo connector spanmetrics, e e com elas que o dashboard e o alerta
@@ -28,11 +28,11 @@ presets:
   kubernetesAttributes:
     enabled: true
 
-# As chaves do New Relic entram como variaveis de ambiente, a partir do
+# As chaves do Datadog entram como variaveis de ambiente, a partir do
 # Secret criado pelo Terraform. Nunca ficam no git.
 extraEnvsFrom:
   - secretRef:
-      name: newrelic-otlp
+      name: datadog-otlp
 
 resources:
   requests:
@@ -111,11 +111,11 @@ config:
       metrics_flush_interval: 15s
 
   exporters:
-    # APM: New Relic recebe traces, metricas e logs por OTLP nativo.
-    otlphttp/newrelic:
-      endpoint: ${env:NEW_RELIC_OTLP_ENDPOINT}
-      headers:
-        api-key: ${env:NEW_RELIC_LICENSE_KEY}
+    # APM: Datadog recebe traces (Service Map + APM), metricas e logs.
+    datadog:
+      api:
+        key: ${env:DD_API_KEY}
+        site: ${env:DD_SITE}
     # Metricas para o Prometheus (receptor OTLP habilitado no kube-prometheus-stack).
     otlphttp/prometheus:
       metrics_endpoint: http://kps-prometheus.monitoring.svc.cluster.local:9090/api/v1/otlp/v1/metrics
@@ -132,15 +132,15 @@ config:
       traces:
         receivers: [otlp]
         processors: [memory_limiter, resource, batch]
-        exporters: [otlphttp/newrelic, spanmetrics, debug]
+        exporters: [datadog, spanmetrics, debug]
       metrics:
         receivers: [otlp, spanmetrics]
         processors: [memory_limiter, resource, batch]
-        exporters: [otlphttp/prometheus, otlphttp/newrelic]
+        exporters: [otlphttp/prometheus, datadog]
       logs:
         receivers: [otlp]
         processors: [memory_limiter, resource, batch]
-        exporters: [otlphttp/loki, otlphttp/newrelic]
+        exporters: [otlphttp/loki, datadog]
     telemetry:
       metrics:
         readers:

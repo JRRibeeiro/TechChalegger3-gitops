@@ -57,9 +57,10 @@ spec:
               i=0
               while true; do
                 i=$((i+1))
-                # cadeia: evaluation -> flag/targeting
+                # cadeia: evaluation -> flag/targeting -> auth -> SQS -> analytics
+                # (o ingress corta o prefixo /evaluate, por isso /evaluate/evaluate)
                 curl -s -o /dev/null -w "eval=%{http_code} " \
-                  "$BASE/evaluate?user_id=user-$((i % 50))&flag_name=demo-flag"
+                  "$BASE/evaluate/evaluate?user_id=user-$((i % 50))&flag_name=demo-flag"
                 # auth com chave VALIDA: 200 normal; 500 quando o chaos liga
                 curl -s -o /dev/null -w "auth=%{http_code} " \
                   "$BASE/auth/validate" -H "Authorization: Bearer $VALIDKEY"

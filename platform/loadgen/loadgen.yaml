@@ -1,13 +1,14 @@
 # Gerador de trafego da demonstracao.
 #
-# Fica batendo no /evaluate pela entrada do cluster (Ingress). Isso exercita a
-# cadeia inteira (evaluation -> flag/targeting -> auth -> Redis/SQS) e e o que
-# faz o dashboard mostrar taxa de requisicoes e, quando o chaos liga o erro no
-# auth, a taxa de erro 5xx subir e o alerta disparar.
+# Provisiona UMA chave de API valida no auth (via MASTER_KEY) ao subir e depois
+# fica batendo em /evaluate (cadeia eval -> flag/targeting) e em /auth/validate
+# COM a chave valida. Assim o baseline do auth e saudavel (200). Quando o chaos
+# e ligado, /validate passa a responder 500 -> a taxa de erro 5xx do auth sobe,
+# o alerta dispara e o self-healer reinicia o deployment (o restart tambem zera
+# o chaos, que e estado em memoria -> o erro cessa sozinho).
 #
 # Nao e infraestrutura de producao: esta aqui so para a demo ter movimento.
-# Para desligar, basta escalar para zero:
-#   kubectl -n techchallenger scale deployment/loadgen --replicas=0
+# Para desligar: kubectl -n techchallenger scale deployment/loadgen --replicas=0
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,27 +30,39 @@ spec:
         - name: loadgen
           image: curlimages/curl:8.11.1
           env:
-            # entra pelo controller do nginx; as regras do Ingress roteiam por caminho
             - name: BASE
               value: http://ingress-nginx-controller.ingress-nginx.svc.cluster.local
             - name: INTERVALO
               value: "0.2" # ~5 requisicoes por segundo
+            - name: MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: auth-service-secret
+                  key: MASTER_KEY
           command:
             - /bin/sh
             - -c
             - |
-              echo "loadgen batendo em $BASE a cada ${INTERVALO}s"
+              echo "loadgen: provisionando chave valida no auth..."
+              VALIDKEY=""
+              until [ -n "$VALIDKEY" ]; do
+                RESP=$(curl -s -X POST "$BASE/auth/admin/keys" \
+                  -H "Authorization: Bearer $MASTER_KEY" \
+                  -H "Content-Type: application/json" \
+                  -d '{"name":"loadgen"}')
+                VALIDKEY=$(echo "$RESP" | sed -n 's/.*"key":"\(tm_key_[0-9a-f]*\)".*/\1/p')
+                [ -z "$VALIDKEY" ] && echo "loadgen: aguardando auth/ingress..." && sleep 3
+              done
+              echo "loadgen: chave obtida, batendo em $BASE a cada ${INTERVALO}s"
               i=0
               while true; do
                 i=$((i+1))
-                # cadeia completa: exercita evaluation -> flag/targeting -> auth -> Redis/SQS
+                # cadeia: evaluation -> flag/targeting
                 curl -s -o /dev/null -w "eval=%{http_code} " \
                   "$BASE/evaluate?user_id=user-$((i % 50))&flag_name=demo-flag"
-                # trafego direto no auth, para a taxa de erro 5xx ficar visivel
-                # quando o chaos for ligado (sem chaos isto responde 401, que
-                # nao conta como 5xx; com chaos vira 500 antes da validacao).
+                # auth com chave VALIDA: 200 normal; 500 quando o chaos liga
                 curl -s -o /dev/null -w "auth=%{http_code} " \
-                  "$BASE/auth/validate" -H "Authorization: Bearer loadgen-probe"
+                  "$BASE/auth/validate" -H "Authorization: Bearer $VALIDKEY"
                 sleep "$INTERVALO"
                 [ $((i % 20)) -eq 0 ] && echo " ($i ciclos)"
               done
